@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 from pymongo import ASCENDING, DESCENDING, MongoClient
 from pymongo.collection import Collection
 
-from render_api.settings import settings
+from settings import settings
 
 
 class SignalStore:

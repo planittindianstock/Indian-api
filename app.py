@@ -4,9 +4,9 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from render_api.db import SignalStore
-from render_api.schemas import HealthResponse, SignalIngestPayload, SignalResponse
-from render_api.settings import settings
+from db import SignalStore
+from schemas import HealthResponse, SignalIngestPayload, SignalResponse
+from settings import settings
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
 
