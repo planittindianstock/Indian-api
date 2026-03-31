@@ -4,15 +4,24 @@ from typing import Optional
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from db import SignalStore
-from schemas import HealthResponse, SignalIngestPayload, SignalResponse
-from settings import settings
+try:
+    from render_api.admin_routes import router as admin_router
+    from render_api.db import SignalStore
+    from render_api.schemas import HealthResponse, SignalIngestPayload, SignalResponse
+    from render_api.settings import settings
+    from render_api.worker_controller import WorkerController
+except ImportError:
+    from admin_routes import router as admin_router
+    from db import SignalStore
+    from schemas import HealthResponse, SignalIngestPayload, SignalResponse
+    from settings import settings
+    from worker_controller import WorkerController
 
 app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.allowed_origins,
+    allow_origins=settings.ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -26,6 +35,19 @@ def get_store() -> SignalStore:
     if _store is None:
         _store = SignalStore()
     return _store
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    store = get_store()
+    app.state.worker_controller = WorkerController(store=store)
+
+
+@app.on_event("shutdown")
+async def shutdown() -> None:
+    controller: Optional[WorkerController] = getattr(app.state, "worker_controller", None)
+    if controller:
+        await controller.stop_workers(["generator", "labeler"])
 
 
 def require_auth(authorization: str = Header(default="")) -> None:
@@ -79,3 +101,6 @@ def get_signal_history(
     store: SignalStore = Depends(get_store),
 ):
     return {"ok": True, "items": store.signal_history(symbol=symbol, timeframe=timeframe, limit=limit)}
+
+
+app.include_router(admin_router)

@@ -1,6 +1,6 @@
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -41,3 +41,25 @@ class HealthResponse(BaseModel):
     ok: bool
     service: str
     timestamp: datetime
+
+
+class WorkerAction(str, Enum):
+    start = "start"
+    stop = "stop"
+
+
+class WorkerControlRequest(BaseModel):
+    action: WorkerAction
+    workers: List[str] = Field(default_factory=list)
+    symbols: Optional[List[str]] = None
+    interval_seconds: Optional[int] = Field(default=None, ge=15, le=86400)
+
+
+class GenerateSignalRequest(BaseModel):
+    symbol: str = Field(min_length=1, max_length=30)
+    timeframe: str = Field(default="1d", min_length=1, max_length=10)
+
+    @field_validator("symbol")
+    @classmethod
+    def normalize_symbol_for_generate(cls, value: str) -> str:
+        return value.strip().upper()
