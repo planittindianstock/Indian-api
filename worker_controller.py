@@ -1,11 +1,6 @@
 import asyncio
-from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-import pandas as pd
-
-from core.signal_engine import LocalSignalEngine
-from data.fetcher import DataFetcher
 try:
     from render_api.db import SignalStore
     from render_api.settings import settings
@@ -21,8 +16,8 @@ class WorkerController:
         self.labeler_task: Optional[asyncio.Task] = None
         self.symbols: List[str] = list(settings.SIGNAL_SCAN_SYMBOLS)
         self.interval_seconds: int = int(settings.SIGNAL_SCAN_INTERVAL_SECONDS)
-        self.fetcher = DataFetcher()
         self._lock = asyncio.Lock()
+        self.runtime_workers_enabled: bool = bool(settings.ENABLE_RUNTIME_WORKERS)
 
     def status(self) -> Dict:
         return {
@@ -30,9 +25,16 @@ class WorkerController:
             "labeler_running": self.labeler_task is not None and not self.labeler_task.done(),
             "symbols": self.symbols,
             "interval_seconds": self.interval_seconds,
+            "runtime_workers_enabled": self.runtime_workers_enabled,
+            "mode": "runtime_workers" if self.runtime_workers_enabled else "receiver_only",
         }
 
     async def start_workers(self, workers: List[str], symbols: Optional[List[str]] = None, interval_seconds: Optional[int] = None) -> Dict:
+        if not self.runtime_workers_enabled:
+            raise RuntimeError(
+                "Runtime workers are disabled for this deployment. "
+                "Keep render_api as receiver-only and run signal workers on your local machine."
+            )
         async with self._lock:
             if symbols is not None:
                 self.symbols = [s.strip().upper() for s in symbols if s.strip()]
@@ -46,6 +48,8 @@ class WorkerController:
             return self.status()
 
     async def stop_workers(self, workers: List[str]) -> Dict:
+        if not self.runtime_workers_enabled:
+            return self.status()
         async with self._lock:
             tasks = []
             if "generator" in workers and self.generator_task is not None:
@@ -61,20 +65,24 @@ class WorkerController:
             return self.status()
 
     async def generate_once(self, symbol: str, timeframe: str = "1d") -> Dict:
-        engine = LocalSignalEngine()
-        # Prevent recursion into this receiver API in render deployment.
-        engine.api_client.base_url = ""
-        engine.api_client.api_key = ""
-        payload = await asyncio.to_thread(engine.generate_signal, symbol, timeframe)
-        self.store.upsert_event(payload)
-        return payload
+        if not self.runtime_workers_enabled:
+            raise RuntimeError(
+                "Signal generation is disabled on render_api receiver-only deployment. "
+                "Generate signals from local engine and POST to /signals."
+            )
+        raise RuntimeError("Runtime worker engine integration is not configured in this deployment.")
 
     async def retrain_once(self, limit: int = 100) -> Dict:
+        if not self.runtime_workers_enabled:
+            stats = self.store.stats()
+            return {"labeled_now": 0, **stats}
         labeled = await asyncio.to_thread(self._run_labeling_cycle, limit)
         stats = self.store.stats()
         return {"labeled_now": labeled, **stats}
 
     async def _generator_loop(self) -> None:
+        if not self.runtime_workers_enabled:
+            return
         try:
             while True:
                 for symbol in self.symbols:
@@ -88,6 +96,8 @@ class WorkerController:
             return
 
     async def _labeler_loop(self) -> None:
+        if not self.runtime_workers_enabled:
+            return
         try:
             while True:
                 self._run_labeling_cycle(limit=200)
@@ -96,39 +106,6 @@ class WorkerController:
             return
 
     def _run_labeling_cycle(self, limit: int = 100) -> int:
-        events = self.store.unlabeled_events(limit=limit)
-        labeled_count = 0
-        for event in events:
-            try:
-                symbol = str(event.get("symbol", "")).strip().upper()
-                signal_type = str(event.get("signal_type", "HOLD"))
-                entry = float(event.get("entry_price", 0))
-                event_ts = pd.to_datetime(event.get("timestamp")).to_pydatetime()
-                if not symbol or entry <= 0:
-                    continue
-
-                start = (event_ts - timedelta(days=2)).strftime("%Y-%m-%d")
-                end = (event_ts + timedelta(days=settings.LABEL_LOOKAHEAD_DAYS + 5)).strftime("%Y-%m-%d")
-                df = self.fetcher.fetch_stock(symbol, start, end)
-                df = self.fetcher.prepare_data(df)
-                if df is None or df.empty:
-                    continue
-
-                next_rows = df[df.index > event_ts]
-                if next_rows.empty:
-                    continue
-                next_close = float(next_rows.iloc[0]["Close"])
-                ret_pct = ((next_close - entry) / entry) * 100.0
-
-                if signal_type == "BUY":
-                    label = "CORRECT" if ret_pct > 0 else "WRONG" if ret_pct < 0 else "FLAT"
-                elif signal_type == "SELL":
-                    label = "CORRECT" if ret_pct < 0 else "WRONG" if ret_pct > 0 else "FLAT"
-                else:
-                    label = "FLAT"
-
-                self.store.label_event(event["idempotency_key"], label, ret_pct, label_source="render_labeler")
-                labeled_count += 1
-            except Exception:
-                continue
-        return labeled_count
+        # Receiver-only deployment does not have market-data access/model runtime.
+        # Labels can be written by an external/local process via shared DB if desired.
+        return 0

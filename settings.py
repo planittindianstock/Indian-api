@@ -20,6 +20,7 @@ class RenderApiSettings(BaseSettings):
     DEFAULT_PAGE_SIZE: int = 50
     MAX_PAGE_SIZE: int = 200
     ENABLE_AI_ADVISOR: bool = False
+    ENABLE_RUNTIME_WORKERS: bool = False
     SIGNAL_SCAN_INTERVAL_SECONDS: int = 90
     SIGNAL_SCAN_SYMBOLS: List[str] = Field(default_factory=lambda: ["RELIANCE.NS", "TCS.NS", "INFY.NS"])
     LABEL_LOOKAHEAD_DAYS: int = 3

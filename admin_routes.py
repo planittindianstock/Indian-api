@@ -58,8 +58,11 @@ async def ai_retrain(
         raw_limit = payload.get("limit")
         if isinstance(raw_limit, int) and 1 <= raw_limit <= 5000:
             limit = raw_limit
-    result = await controller.retrain_once(limit=limit)
-    return {"ok": True, "result": result}
+    try:
+        result = await controller.retrain_once(limit=limit)
+        return {"ok": True, "result": result}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 
 
 @router.post("/worker/start-stop")
@@ -69,14 +72,17 @@ async def worker_start_stop(
     controller: WorkerController = Depends(get_controller),
 ):
     workers = payload.workers or ["generator", "labeler"]
-    if payload.action.value == "start":
-        status_data = await controller.start_workers(
-            workers=workers,
-            symbols=payload.symbols,
-            interval_seconds=payload.interval_seconds,
-        )
-    else:
-        status_data = await controller.stop_workers(workers=workers)
+    try:
+        if payload.action.value == "start":
+            status_data = await controller.start_workers(
+                workers=workers,
+                symbols=payload.symbols,
+                interval_seconds=payload.interval_seconds,
+            )
+        else:
+            status_data = await controller.stop_workers(workers=workers)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
     return {"ok": True, "workers": status_data}
 
 
@@ -86,5 +92,8 @@ async def generate_signal_now(
     _auth: None = Depends(require_admin_auth),
     controller: WorkerController = Depends(get_controller),
 ):
-    signal = await controller.generate_once(symbol=payload.symbol, timeframe=payload.timeframe)
-    return {"ok": True, "item": signal}
+    try:
+        signal = await controller.generate_once(symbol=payload.symbol, timeframe=payload.timeframe)
+        return {"ok": True, "item": signal}
+    except RuntimeError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
